@@ -1,6 +1,8 @@
 import sqlite3,time
 from DBconnect import SocketTransiever
 from dotenv import load_dotenv, dotenv_values
+from sys import argv
+
 from datetime import datetime
 from threading import Thread,Event
 from asyncio import Queue, QueueEmpty
@@ -31,8 +33,8 @@ class Channel():
     def __eq__(self, __value: object) -> bool:
         return self.ID_from == __value
 class Model():
-    def __init__(self,filename,exitFlag:Event=None) -> None:
-        self.db = sqlite3.connect(filename)
+    def __init__(self,filename:str,exitFlag:Event=None) -> None:
+        self.db = sqlite3.connect(f"file:{filename}?mode=rw",uri=True)
         self.cur = self.db.cursor()
         tables = self.get_all_tables()
         self.table_names = tables if tables else TABLES
@@ -195,6 +197,14 @@ class Model():
         self.db.commit()
         self.db.close()
 if __name__ == "__main__":
-    try:Model("MMM.db").control_thread()
+    if len(argv)>1:
+        db_path = argv[1] 
+    else: 
+        db_path = "MMM.db"
+    try:
+        Model(db_path).control_thread()
     except KeyboardInterrupt:quit()
+    except sqlite3.OperationalError as E:
+        print(E)
+        quit()
     
