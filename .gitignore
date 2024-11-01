@@ -1,0 +1,6 @@
+shutdown.py
+routing.py
+*.db
+*.bat
+__pycache__/
+*.env
