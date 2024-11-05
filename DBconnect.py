@@ -58,7 +58,7 @@ class SocketTransiever():
                 if not retry: 
                     print(f"Failure")
                     return
-            print("\r")
+            print("\r",end="")
             
     def accept(self):
         self.conn, addr = self.host_sock.accept()
