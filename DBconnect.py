@@ -53,11 +53,12 @@ class SocketTransiever():
             try:
                 self.target_sock.connect(self.target)
                 print(f"Success")
-                break
+                return
             except ConnectionRefusedError:
                 if not retry: 
                     print(f"Failure")
-                    break
+                    return
+            print("\r")
             
     def accept(self):
         self.conn, addr = self.host_sock.accept()
