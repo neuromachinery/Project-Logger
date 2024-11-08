@@ -6,6 +6,7 @@ from os import path
 from datetime import datetime
 from threading import Thread,Event
 from asyncio import Queue, QueueEmpty
+CWD = path.dirname(path.realpath(__file__))
 MISCELLANIOUS_LOGS_TABLE = "LogsMisc"
 TELEGRAM_LOGS_TABLE = "LogsTelegram"
 DISCORD_LOGS_TABLE =  "LogsDiscord"
@@ -22,7 +23,7 @@ TABLES = (MISCELLANIOUS_LOGS_TABLE,
           FILE_TABLE)
 load_dotenv()
 HOST = "127.0.0.1"
-config = dotenv_values(".env")
+config = dotenv_values(path.join(CWD,".env"))
 CONTROL_THREAD_TIMEOUT = 0.1
 def now():
     return datetime.now().strftime("[%d.%m.%Y@%H:%M:%S]")
@@ -200,7 +201,7 @@ if __name__ == "__main__":
     if len(argv)>1:
         db_path = argv[1] 
     else: 
-        db_path = path.join(path.dirname(path.realpath(__file__)),"MMM.db")
+        db_path = path.join(CWD,"MMM.db")
     try:
         print("Logger started",end="\r")
         Model(db_path).control_thread()
