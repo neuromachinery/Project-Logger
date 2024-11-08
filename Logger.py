@@ -2,7 +2,7 @@ import sqlite3,time
 from DBconnect import SocketTransiever
 from dotenv import load_dotenv, dotenv_values
 from sys import argv
-
+from os import path
 from datetime import datetime
 from threading import Thread,Event
 from asyncio import Queue, QueueEmpty
@@ -200,11 +200,14 @@ if __name__ == "__main__":
     if len(argv)>1:
         db_path = argv[1] 
     else: 
-        db_path = "MMM.db"
+        db_path = path.join(path.dirname(path.realpath(__file__)),"MMM.db")
     try:
+        print("Logger started",end="\r")
         Model(db_path).control_thread()
     except KeyboardInterrupt:quit()
     except sqlite3.OperationalError as E:
         print(E)
         quit()
+    finally:
+        print("Logger stopped")
     
