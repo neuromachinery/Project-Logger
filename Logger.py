@@ -6,6 +6,7 @@ from os import path
 from datetime import datetime
 from threading import Thread,Event
 from asyncio import Queue, QueueEmpty
+from traceback import format_exc
 CWD = path.dirname(path.realpath(__file__))
 MISCELLANIOUS_LOGS_TABLE = "LogsMisc"
 TELEGRAM_LOGS_TABLE = "LogsTelegram"
@@ -23,6 +24,14 @@ TABLES = (MISCELLANIOUS_LOGS_TABLE,
           FILE_TABLE)
 load_dotenv()
 HOST = "127.0.0.1"
+MMM_PORT = 54323
+DB_PORT = 54321
+SITE_PORT = 54322 
+ADDRESS_DICT = {
+    "DB":(HOST,DB_PORT),
+    "MMM":(HOST,MMM_PORT),
+    "SITE":(HOST,SITE_PORT)
+}
 config = dotenv_values(path.join(CWD,".env"))
 CONTROL_THREAD_TIMEOUT = 0.1
 def now():
@@ -46,9 +55,10 @@ class Model():
         self.table_params = {k:(p,i) for (k,p,i) in zip(self.table_names,TABLE_PARAMS,(*TABLE_INDEXES,*(("",""),)*(len(self.table_names)-len(TABLE_INDEXES))))}
         #print(self.table_names,self.table_params)
         self.exitFlag = exitFlag if exitFlag else Event()
-        self.transievers = [SocketTransiever((HOST,int(host))) for host in config.values()]
+        self.transiever = SocketTransiever((HOST,DB_PORT))
+        self.transiever.bind()
         #print(f"amount of transievers: {len(self.transievers)}")
-        [transiever.bind() for transiever in self.transievers]
+        
         ''' decommisioned
         for Key,(Param,Indexes) in self.table_params.items():
             self.cur.execute(f"""
@@ -93,24 +103,25 @@ class Model():
             column_name = col_info[1]
             table_indexes.append((index_name, column_name))
         return table_indexes
-    def process_connection(self,transiever:SocketTransiever,queue):
+    def process_connection(self,conn:SocketTransiever,addr:tuple,request_queue:Queue):
         try:
+            data = []
             while not self.exitFlag.is_set(): 
-                print(f"waiting for connection @ {transiever.host}")
-                conn, addr = transiever.accept()
-                print(f"accepted @ {addr}")
-                while True:
-                    time.sleep(CONTROL_THREAD_TIMEOUT)
-                    print(f"waiting to recieve @ {addr}")
-                    message = transiever.receive_message(transiever.conn)
-                    if not message:
-                        conn.close()
-                        print(f"closing @ {addr}")
-                        break
-                    print("From {0}, type {1}, data: {2}".format(*message.values()))
-                    queue.put_nowait((transiever,message))
+                #print(f"waiting to recieve @ {addr}")
+                message = self.transiever.receive_message(conn)
+                if not message:
+                    break
+                data.append(message)
+                message_data = ', data '+str(message['message']) if len(str(message['message']))<80 else ''
+                print(f"< From {message['name']}, to {message['target']}, type: {message['type']}{message_data}")
+                time.sleep(CONTROL_THREAD_TIMEOUT)
         finally:
-            print("Thread has died")
+            if not conn._closed:conn.close()
+            #print(f"Connection @{addr} closed")                
+            for message in data:
+                addr = ADDRESS_DICT[message["name"]] if message["name"] in ADDRESS_DICT else addr
+                request_queue.put_nowait((addr,message))
+                
     def process_message(self,message):
         if message["type"] == "LOG":
             result = self.DB_log(*message["message"])
@@ -120,46 +131,53 @@ class Model():
             request = message["message"]
             if not request: return
             result = self.DB_list(*request)
-            return ("DB","ANS",result)
+            return {"sender_name":"DB","message_type":"ANS","message":result}
         if message["type"] == "GET":
             request = message["message"]
             if not request: return
             result = self.DB_fetch(*request)
-            return ("DB","ANS",result)
+            return {"sender_name":"DB","message_type":"ANS","message":result}
         if message["type"] == "CNT":
             request = message["message"]
             if not request: return
             result = self.DB_count(*request)
-            return ("DB","ANS",result)
+            return {"sender_name":"DB","message_type":"ANS","message":result}
+        if message["type"] == "MSG":
+            print(f"MESSAGE {request}")
         if message["type"] == "STP":
             print("STOPPING")
             self.exitFlag.set()
+    def accept_thread(self,queue:Queue):
+        while not self.exitFlag.is_set():
+            Thread(target=self.process_connection,args=(*self.transiever.accept(),queue),daemon=True).start()
     def control_thread(self):
         try:
-            MessageQueue = Queue()
-            threads = []
-            for transiever in self.transievers:
-                thread = Thread(target=self.process_connection,args=(transiever,MessageQueue),daemon=True)
-                threads.append(thread)
-                thread.start()
+            request_queue = Queue()
+            Thread(target=self.accept_thread,args=(request_queue,),daemon=True).start()
             while not self.exitFlag.is_set():
                 try:
-                    transiever,message = MessageQueue.get_nowait()
-                    try:result = self.process_message(message)
-                    except Exception as E:
-                        transiever.send_message(transiever.conn,(f"ERROR: {E}"))
-                        self.DB_log(MISCELLANIOUS_LOGS_TABLE,(f"'{message}' failed: '{E}' @ {transiever}",now()))
-                    if result:
-                        #transiever.send_message(transiever.conn,result)
-                        transiever.send_message(transiever.conn,*result)
-                except QueueEmpty:time.sleep(CONTROL_THREAD_TIMEOUT)
-
-            #[thread.join() for thread in threads]
-                    
+                    addr,request = request_queue.get_nowait()
+                except QueueEmpty:
+                    time.sleep(CONTROL_THREAD_TIMEOUT)
+                    continue
+                if not all([field in request for field in ("name","type","target","message")]):
+                    continue # filter incomplete / bad requests
+                response = self.process_message(request)
+                if response:
+                    data = ', data '+str(response['message']) if len(str(response['message']))<80 else ''
+                    print(f"> To {request['name']}, from DB, type: {response['message_type']}{data}. ")
+                    try:
+                        if not self.transiever.send_message(addr,**response,target_name=request["name"],retry=3):
+                            self.DB_log(MISCELLANIOUS_LOGS_TABLE,(f"Response to {request['name']}@{addr} failed.",now()))
+                    except Exception:
+                        self.DB_log(MISCELLANIOUS_LOGS_TABLE,(format_exc(),now()))
         except KeyboardInterrupt:
             self.DB_log(MISCELLANIOUS_LOGS_TABLE,("Shutdown",now()))
             self.DB_quit()
             raise KeyboardInterrupt
+        except Exception:
+            self.DB_log(MISCELLANIOUS_LOGS_TABLE,(format_exc(),now()))
+            print(format_exc())
     def DB_log(self,table_name:str,message):
         "Logs whatever to one of logging tables"
         params = self.table_params[table_name][0].replace(" TEXT","").replace(" INTEGER","")
@@ -206,9 +224,8 @@ if __name__ == "__main__":
         print("Logger started",end="\r")
         Model(db_path).control_thread()
     except KeyboardInterrupt:quit()
-    except sqlite3.OperationalError as E:
-        print(E)
-        quit()
+    except Exception:
+        print(format_exc())
     finally:
         print("Logger stopped")
     
