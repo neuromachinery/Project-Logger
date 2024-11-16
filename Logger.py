@@ -112,8 +112,8 @@ class Model():
                 if not message:
                     break
                 data.append(message)
-                message_data = ', data '+str(message['message']) if len(str(message['message']))<80 else ''
-                print(f"< From {message['name']}, to {message['target']}, type: {message['type']}{message_data}")
+                message_data = str(message['message']) if len(str(message['message']))<80 else str(message['message'][0])
+                print(f"< From {message['name']}, to {message['target']}, type: {message['type']}, data {message_data}")
                 time.sleep(CONTROL_THREAD_TIMEOUT)
         finally:
             if not conn._closed:conn.close()
@@ -164,8 +164,8 @@ class Model():
                     continue # filter incomplete / bad requests
                 response = self.process_message(request)
                 if response:
-                    data = ', data '+str(response['message']) if len(str(response['message']))<80 else ''
-                    print(f"> To {request['name']}, from DB, type: {response['message_type']}{data}. ")
+                    data = str(response['message']) if len(str(response['message']))<80 else str(response['message'][0])
+                    print(f"> To {request['name']}, from DB, type: {response['message_type']}, data {data}. ")
                     try:
                         if not self.transiever.send_message(addr,**response,target_name=request["name"],retry=3):
                             self.DB_log(MISCELLANIOUS_LOGS_TABLE,(f"Response to {request['name']}@{addr} failed.",now()))

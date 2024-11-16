@@ -68,7 +68,8 @@ class SocketTransiever():
                     
             #print("\r",end="")
             
-    def accept(self):
+    def accept(self,timeout=None):
+        self.host_sock.settimeout(timeout)
         try:self.conn, self.addr = self.host_sock.accept()
         except OSError:
             self.bind()
@@ -99,8 +100,11 @@ class SocketTransiever():
             self.target = None
             self.target_sock = None
         return True
-    def receive_message(self,conn:socket=None):  
+    def receive_message(self,conn:socket=None,timeout=None):  
         conn = conn if conn else self.target_sock
+        if not conn:
+            conn,addr = self.accept()
+            conn.settimeout(timeout)
         try:data = conn.recv(65536)
         except ConnectionResetError:
             conn.close()
