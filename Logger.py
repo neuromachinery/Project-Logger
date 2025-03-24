@@ -6,7 +6,7 @@ from os import path
 from datetime import datetime
 from threading import Thread,Event
 from asyncio import Queue, QueueEmpty
-from traceback import format_exc
+from traceback import format_exc,print_exc
 CWD = path.dirname(path.realpath(__file__))
 MISCELLANIOUS_LOGS_TABLE = "LogsMisc"
 TELEGRAM_LOGS_TABLE = "LogsTelegram"
@@ -130,7 +130,10 @@ class Model():
         if message["type"] == "LST":
             request = message["message"]
             if not request: return
-            result = self.DB_list(*request)
+            if type(request) == tuple:
+                result = self.DB_list(*request)
+            elif type(request) == dict:
+                result = self.DB_list(**request)
             return {"sender_name":"DB","message_type":"ANS","message":result}
         if message["type"] == "GET":
             request = message["message"]
@@ -151,53 +154,61 @@ class Model():
         while not self.exitFlag.is_set():
             Thread(target=self.process_connection,args=(*self.transiever.accept(),queue),daemon=True).start()
     def control_thread(self):
-        try:
-            request_queue = Queue()
-            Thread(target=self.accept_thread,args=(request_queue,),daemon=True).start()
-            while not self.exitFlag.is_set():
-                try:
-                    addr,request = request_queue.get_nowait()
-                except QueueEmpty:
-                    time.sleep(CONTROL_THREAD_TIMEOUT)
-                    continue
+        request_queue = Queue()
+        Thread(target=self.accept_thread,args=(request_queue,),daemon=True).start()
+        while not self.exitFlag.is_set():
+            try:
+                addr,request = request_queue.get_nowait()
                 if not all([field in request for field in ("name","type","target","message")]):
                     continue # filter incomplete / bad requests
                 response = self.process_message(request)
-                if response:
-                    data = str(response['message']) if len(str(response['message']))<80 else str(response['message'][0])
-                    print(f"> To {request['name']}, from DB, type: {response['message_type']}, data {data}. ")
-                    try:
-                        if not self.transiever.send_message(addr,**response,target_name=request["name"],retry=3):
-                            self.DB_log(MISCELLANIOUS_LOGS_TABLE,(f"Response to {request['name']}@{addr} failed.",now()))
-                    except Exception:
-                        self.DB_log(MISCELLANIOUS_LOGS_TABLE,(format_exc(),now()))
-        except KeyboardInterrupt:
-            self.DB_log(MISCELLANIOUS_LOGS_TABLE,("Shutdown",now()))
-            self.DB_quit()
-            raise KeyboardInterrupt
-        except Exception:
-            self.DB_log(MISCELLANIOUS_LOGS_TABLE,(format_exc(),now()))
-            print(format_exc())
+                if not response:
+                    continue
+                data = str(response['message']) if len(str(response['message']))<80 else str(response['message'][0])
+                print(f"> To {request['name']}, from DB, type: {response['message_type']}, data {data}. ")
+                if self.transiever.send_message(addr,**response,target_name=request["name"],retry=3):
+                    continue
+                self.DB_log(MISCELLANIOUS_LOGS_TABLE,(f"Response to {request['name']}@{addr} failed.",now()))
+            except KeyboardInterrupt:
+                self.DB_log(MISCELLANIOUS_LOGS_TABLE,("Shutdown",now()))
+                self.DB_quit()
+                raise KeyboardInterrupt
+            except QueueEmpty:
+                time.sleep(CONTROL_THREAD_TIMEOUT)
+            except sqlite3.OperationalError as e:
+                print_exc()
+                print(request)
+            except Exception:
+                self.DB_log(MISCELLANIOUS_LOGS_TABLE,(format_exc(),now()))
+                print_exc()
+            
     def DB_log(self,table_name:str,message):
         "Logs whatever to one of logging tables"
         params = self.table_params[table_name][0].replace(" TEXT","").replace(" INTEGER","")
         params_len = len(params.split(","))
-        try:
-            command = f"INSERT INTO {table_name} ({params}) VALUES ({', '.join(['?']*params_len)})",[thing if str(thing) else "<nothing>" for thing in message[:params_len]]
-            self.cur.execute(*command)
-        except sqlite3.OperationalError as e:
-            return "; ".join([str(e),table_name,*map(str,message),command[0]])
+        command = f"INSERT INTO {table_name} ({params}) VALUES ({', '.join(['?']*params_len)})",[thing if str(thing) else "<nothing>" for thing in message[:params_len]]
+        self.cur.execute(*command)
         self.DB_commit()
         return True
-    def DB_count(self,table_name:str):
+    def DB_count(self,table_name:str,filter_col:str=None,filter_val:str=None):
+        if filter_col and filter_val:
+            return int(self.cur.execute(f"SELECT COUNT(*) FROM {table_name} WHERE {filter_col} = ?", (filter_val,)).fetchone()[0])
         return int(self.cur.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0])
     def DB_remove(self,table_name:str,id):
         "Removes certain entries from database."
         self.cur.execute(f"DELETE FROM {table_name} WHERE id={id}") 
-    def DB_list(self,table_name:str,limit:int=-1,offset:int=0,desc_order:bool=False):
+    def DB_list(self,table_name:str,limit:int=-1,offset:int=0,desc_order:bool=False,filter_col:str=None,filter_val:str=None):
         "Returns list of all entries in database"
-        command = f"SELECT {self.table_params[table_name][0]} FROM {table_name} ORDER BY id {'DESC' if desc_order else 'ASC'} LIMIT {limit} OFFSET {offset}"
-        return self.cur.execute(command).fetchall()
+        table = self.table_params[table_name][0]
+        command = f"SELECT {table} FROM {table_name} "
+        if filter_col and filter_val:
+            command += f"WHERE ? = ?"
+            args = (filter_col,filter_val,limit,offset)
+        else:
+            args = (limit,offset)
+        command += f"ORDER BY id {'DESC' if desc_order else 'ASC'} LIMIT ? OFFSET ?"
+        print(command,args)
+        return self.cur.execute(command,args).fetchall()
     def DB_fetch(self,table_name:str,column_name,filter:str,limit:int=1):
         command = f"SELECT * FROM {table_name} WHERE {column_name} = ? LIMIT ?"
         return self.cur.execute(command, (filter, limit)).fetchall()
@@ -225,7 +236,7 @@ if __name__ == "__main__":
         Model(db_path).control_thread()
     except KeyboardInterrupt:quit()
     except Exception:
-        print(format_exc())
+        print_exc()
     finally:
         print("Logger stopped")
     
