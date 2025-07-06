@@ -4,3 +4,4 @@ routing.py
 *.bat
 __pycache__/
 *.env
+backups

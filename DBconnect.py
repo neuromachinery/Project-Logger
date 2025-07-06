@@ -52,21 +52,14 @@ class SocketTransiever():
         self.target = addr
         self.target_sock = socket(AF_INET, SOCK_STREAM)
         while True:
-            #print(f"Trying to connect to {self.target}... ",end="")
             try:
                 self.target_sock.connect(self.target)
-                #print(f"Success")
                 return self.target_sock
             except ConnectionRefusedError:
                 if retry>0: 
                     retry-=1
-                    #print(f"Trying {retry} more times... ",end="")
-                    #sleep(RETRY_TIMEOUT)
                 if retry==0:
-                    #print("Failure")
                     return
-                    
-            #print("\r",end="")
             
     def accept(self,timeout=None):
         self.host_sock.settimeout(timeout)
@@ -90,7 +83,6 @@ class SocketTransiever():
             "message": message
         }
         pickled_data = dumps(data)
-        if(len(pickled_data)>65535):return False
         try:sock.sendall(pickled_data)
         except OSError as E:
             print(E)
@@ -105,7 +97,9 @@ class SocketTransiever():
         if not conn:
             conn,addr = self.accept()
             conn.settimeout(timeout)
-        try:data = conn.recv(65536)
+        data = bytes()
+        try:
+            while chunk := conn.recv(65535):data +=chunk
         except ConnectionResetError:
             conn.close()
             return None
