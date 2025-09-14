@@ -194,8 +194,9 @@ class Model():
                 self.DB_log(MISCELLANIOUS_LOGS_TABLE,(format_exc(),now()))
                 print_exc()
             
-    def DB_log(self,table_name:str,message):
+    def DB_log(self,table_name:str,message,*args):
         "Logs whatever to one of logging tables"
+        if args: print(table_name,message,args)
         params = self.table_params[table_name][0].replace(" TEXT","").replace(" INTEGER","")
         params_len = len(params.split(","))
         command = f"INSERT INTO {table_name} ({params}) VALUES ({', '.join(['?']*params_len)})",[thing if str(thing) else "<nothing>" for thing in message[:params_len]]
