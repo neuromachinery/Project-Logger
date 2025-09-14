@@ -15,6 +15,9 @@ SITE_LOGS_TABLE = "LogsSite"
 ROUTING_TABLE = "Routing"
 CHATSITE_TABLE = "ChatSite"
 FILE_TABLE = "FilenamesSite"
+DIRECT_TABLE = "DirectSite"
+ROOMS_TABLE = "RoomsSite"
+DELETABLE_TABLES = (ROOMS_TABLE)
 TABLES = (MISCELLANIOUS_LOGS_TABLE,
           TELEGRAM_LOGS_TABLE,
           DISCORD_LOGS_TABLE,
@@ -33,6 +36,7 @@ ADDRESS_DICT = {
     "SITE":(HOST,SITE_PORT)
 }
 config = dotenv_values(path.join(CWD,".env"))
+BOT_KEY = config["BOT_KEY"]
 CONTROL_THREAD_TIMEOUT = 0.1
 def now():
     return datetime.now().strftime("[%d.%m.%Y@%H:%M:%S]")
@@ -147,6 +151,14 @@ class Model():
             return {"sender_name":"DB","message_type":"ANS","message":result}
         if message["type"] == "MSG":
             print(f"MESSAGE {request}")
+        if message["type"] == "CLR":
+            request = message["message"]
+            self.DB_remove(*request)
+            print(f"REMOVED: {request}")
+        if message["type"] == "BOT":
+            request = message["message"]
+            result = self.BotVerify(*request)
+            return {"sender_name":"DB","message_type":"ANS","message":result}
         if message["type"] == "STP":
             print("STOPPING")
             self.exitFlag.set()
@@ -194,9 +206,10 @@ class Model():
         if filter_col and filter_val:
             return int(self.cur.execute(f"SELECT COUNT(*) FROM {table_name} WHERE {filter_col} = ?", (filter_val,)).fetchone()[0])
         return int(self.cur.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0])
-    def DB_remove(self,table_name:str,id):
-        "Removes certain entries from database."
-        self.cur.execute(f"DELETE FROM {table_name} WHERE id={id}") 
+    def DB_remove(self, table_name: str, column_name: str, column_value):
+        if not table_name in DELETABLE_TABLES: return
+        query = f"DELETE FROM {table_name} WHERE {column_name} = ?"
+        self.cur.execute(query, (column_value,))
     def DB_list(self,table_name:str,limit:int=-1,offset:int=0,desc_order:bool=False,filter_col:str=None,filter_val:str=None):
         "Returns list of all entries in database"
         table = self.table_params[table_name][0]
@@ -221,6 +234,9 @@ class Model():
     def DB_edit(self,table_name:str,id,field,value):
         "Edits entries in database"
         self.cur.execute(f"UPDATE {table_name} SET {field}={value} WHERE id={id}")
+    def BotVerify(self,key:str):
+        "Verifies received bot key with the one configured"
+        return key==BOT_KEY
     def DB_commit(self):
         self.db.commit()
     def DB_quit(self):
